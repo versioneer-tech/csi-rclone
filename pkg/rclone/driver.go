@@ -1,13 +1,14 @@
 package rclone
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"sync"
 
+	"github.com/SwissDataScienceCenter/csi-rclone/pkg/kube"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	csicommon "github.com/kubernetes-csi/drivers/pkg/csi-common"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog"
 	"k8s.io/utils/mount"
 
@@ -15,14 +16,14 @@ import (
 )
 
 type Driver struct {
-	csiDriver *csicommon.CSIDriver
+	CSIDriver *csicommon.CSIDriver
 	endpoint  string
 
-	ns        *nodeServer
-	cap       []*csi.VolumeCapability_AccessMode
-	cscap     []*csi.ControllerServiceCapability
-	RcloneOps Operations
-	Server    csicommon.NonBlockingGRPCServer
+	ns     *nodeServer
+	cs     *controllerServer
+	cap    []*csi.VolumeCapability_AccessMode
+	cscap  []*csi.ControllerServiceCapability
+	server csicommon.NonBlockingGRPCServer
 }
 
 var (
@@ -41,7 +42,7 @@ func getFreePort() (port int, err error) {
 	return
 }
 
-func NewDriver(nodeID, endpoint string, kubeClient *kubernetes.Clientset) *Driver {
+func NewDriver(nodeID, endpoint string) *Driver {
 	driverName := os.Getenv("DRIVER_NAME")
 	if driverName == "" {
 		panic("DriverName env var not set!")
@@ -50,17 +51,12 @@ func NewDriver(nodeID, endpoint string, kubeClient *kubernetes.Clientset) *Drive
 
 	d := &Driver{}
 	d.endpoint = endpoint
-	rclonePort, err := getFreePort()
-	if err != nil {
-		panic("Cannot get a free TCP port to run rclone")
-	}
-	d.RcloneOps = NewRclone(kubeClient, rclonePort)
 
-	d.csiDriver = csicommon.NewCSIDriver(driverName, DriverVersion, nodeID)
-	d.csiDriver.AddVolumeCapabilityAccessModes([]csi.VolumeCapability_AccessMode_Mode{
+	d.CSIDriver = csicommon.NewCSIDriver(driverName, DriverVersion, nodeID)
+	d.CSIDriver.AddVolumeCapabilityAccessModes([]csi.VolumeCapability_AccessMode_Mode{
 		csi.VolumeCapability_AccessMode_SINGLE_NODE_SINGLE_WRITER,
 	})
-	d.csiDriver.AddControllerServiceCapabilities(
+	d.CSIDriver.AddControllerServiceCapabilities(
 		[]csi.ControllerServiceCapability_RPC_Type{
 			csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
 		})
@@ -68,45 +64,69 @@ func NewDriver(nodeID, endpoint string, kubeClient *kubernetes.Clientset) *Drive
 	return d
 }
 
-func NewNodeServer(d *Driver) *nodeServer {
+func NewNodeServer(csiDriver *csicommon.CSIDriver) (*nodeServer, error) {
+	kubeClient, err := kube.GetK8sClient()
+	if err != nil {
+		return nil, err
+	}
+
+	rclonePort, err := getFreePort()
+	if err != nil {
+		return nil, fmt.Errorf("Cannot get a free TCP port to run rclone")
+	}
+	rcloneOps := NewRclone(kubeClient, rclonePort)
+
 	return &nodeServer{
-		// Creating and passing the NewDefaultNodeServer is useless and unecessary
-		DefaultNodeServer: csicommon.NewDefaultNodeServer(d.csiDriver),
+		DefaultNodeServer: csicommon.NewDefaultNodeServer(csiDriver),
 		mounter: &mount.SafeFormatAndMount{
 			Interface: mount.New(""),
 			Exec:      utilexec.New(),
 		},
-		RcloneOps: d.RcloneOps,
-	}
+		RcloneOps: rcloneOps,
+	}, nil
 }
 
-func NewControllerServer(d *Driver) *controllerServer {
+func NewControllerServer(csiDriver *csicommon.CSIDriver) *controllerServer {
 	return &controllerServer{
-		// Creating and passing the NewDefaultControllerServer is useless and unecessary
-		DefaultControllerServer: csicommon.NewDefaultControllerServer(d.csiDriver),
-		RcloneOps:               d.RcloneOps,
+		DefaultControllerServer: csicommon.NewDefaultControllerServer(csiDriver),
 		active_volumes:          map[string]int64{},
 		mutex:                   sync.RWMutex{},
 	}
+}
+
+func (d *Driver) WithNodeServer(ns *nodeServer) *Driver {
+	d.ns = ns
+	return d
+}
+
+func (d *Driver) WithControllerServer(cs *controllerServer) *Driver {
+	d.cs = cs
+	return d
 }
 
 func (d *Driver) Run() error {
 	s := csicommon.NewNonBlockingGRPCServer()
 	s.Start(
 		d.endpoint,
-		csicommon.NewDefaultIdentityServer(d.csiDriver),
-		NewControllerServer(d),
-		NewNodeServer(d),
+		csicommon.NewDefaultIdentityServer(d.CSIDriver),
+		d.cs,
+		d.ns,
 	)
-	d.Server = s
-	go s.Wait()
-	return d.RcloneOps.Run()
+	d.server = s
+	if d.ns != nil && d.ns.RcloneOps != nil {
+		return d.ns.RcloneOps.Run()
+	}
+	s.Wait()
+	return nil
 }
 
 func (d *Driver) Stop() error {
-	err := d.RcloneOps.Cleanup()
-	if d.Server != nil {
-		d.Server.Stop()
+	var err error
+	if d.ns != nil && d.ns.RcloneOps != nil {
+		err = d.ns.RcloneOps.Cleanup()
+	}
+	if d.server != nil {
+		d.server.Stop()
 	}
 	return err
 }
