@@ -1,141 +1,74 @@
 
-# CSI rclone mount plugin
+# csi-rclone
 
-This project implements Container Storage Interface (CSI) plugin that allows using [rclone mount](https://rclone.org/) as storage backend. Rclone mount points and [parameters](https://rclone.org/commands/rclone_mount/) can be configured using Secret or PersistentVolume volumeAttibutes. 
+implementing a k8s container storage interface (csi) plugin using [rclone](https://rclone.org/) to mount a remote
 
-## Usage
+## install 
 
-The easiest way to use this driver is to just create a Persistent Volume Claim (PVC) with the `csi-rclone-secret-annotation`
-storage class. Or if you have modified the storage class name in the `values.yaml` file then use the name you have chosen with 
-`-secret-annotation` added at the end of the name. The Helm chart creates 2 storage classes for compatibility reasons. The 
-storage class that matches the name in the values file will expect a secret that matches the PVC name to exist in the same namespace
-as the PVC. Whereas the storage class that has the suffix `-secret-annotation` will require the PVC to have the `csi-rclone.dev/secretName` annotation.
-Note that since the storage is backed by an existing cloud storage like S3 or something similar, the size 
-that is requested in the PVC below has no role at all and is completely ignored. It just has to be provided in the PVC specification.
+review and execute `kubectl apply -f k8s/manifests.yaml` to install the csi plugin into your k8s cluster in the `csi-rclone` namespace
+
+among other things, this will install a StorageClass `csi-rclone` to be used for dynamic volume provisioning
+
+## example
 
 ```yaml
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: csi-rclone-example
-  namespace: csi-rclone-example
-  annotations:
-    csi-rclone.dev/secretName: csi-rclone-example-secret
+  name: mount1
+  namespace: test
 spec:
   accessModes:
-    - ReadWriteMany
+  - ReadOnlyMany
   resources:
     requests:
-      storage: 10Gi
-  storageClassName: csi-rclone-secret-annotation
-```
-
-You have to provide a secret with the rclone configuration. The secret has to have a specific format explained below.
-The secret can be passed to the CSI driver via the annotation `csi-rclone.dev/secretName`.
-
-The secret requires the following fields:
-- `remote`: The name of the remote that should be mounted - has to match the section name in the `configData` field
-- `remotePath`: The path on the remote that should be mounted, it should start with the container itself, for example
-  for a S3 bucket, if the bucket is called `test_bucket`, then the remote should be at least `test_bucket/`.
-- `configData`: The rclone configuration, has to match the JSON schema from `rclone config providers`
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: csi-rclone-example-secret
-  namespace: csi-rclone-example
-type: Opaque
-stringData:
-  remote: giab
-  remotePath: giab/
-  configData: |
-    [giab]
-    type = s3
-    provider = AWS
-```
-
-### Skip provisioning and create PV directly
-
-This is more complicated but doable. Here you have to specify the secret name in the CSI parameters.
-Assuming that the secret that contains the configuration is called `csi-rclone-example-secret` and 
-is located in the namespace `csi-rclone-example`, then the PV specification would look as follows.
-
-```yaml
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: csi-rclone-pv-example
-spec:
-  accessModes:
-    - ReadWriteMany
-  capacity:
-    storage: 10Gi
-  csi:
-    driver: csi-rclone
-    volumeHandle: csi-rclone-pv-example  # same as the PersistentVolumeName
-    # For the provisioning to fully work both fields are required even though they both refer to the same secret
-    nodePublishSecretRef:
-      name: csi-rclone-example-secret
-      namespace: csi-rclone-example
-    volumeAttributes:
-      secretName: csi-rclone-example-secret
-      secretNamespace: csi-rclone-example
-  persistentVolumeReclaimPolicy: Delete
+      storage: 1Mi # not used
+  storageClassName: csi-rclone
 ---
 apiVersion: v1
-kind: PersistentVolumeClaim
+kind: Secret
+type: Opaque
 metadata:
-  name: test-pv-claim
+  name: mount1 # must match name of PVC above
+  namespace: test
+stringData:
+  remote: aws-public
+  remotePath: "/esa-worldcover-s2"
+  configData: |
+    [aws-public]
+    type = s3
+    provider = AWS
+    region = eu-central-1
+    # access_key_id = xxx
+    # secret_access_key = xxx
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mount1
+  namespace: test
 spec:
-  accessModes:
-    - ReadWriteMany
-  resources:
-    requests:
-      storage: 10Gi
-  # If the storage class is not blank then you will get automatic provisioning and the PVC may not be bound
-  # to the selected volume.
-  storageClassName: ""
-  volumeName: "csi-rclone-pv-example"
+  containers:
+  - name: bash
+    image: ubuntu:24.04
+    command: ["/bin/bash", "-c", "sleep infinity"]
+    volumeMounts:
+    - name: data
+      mountPath: "/data"
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: mount1
 ```
 
-## Installation
+run e.g. `kubectl exec -it mount1 -n test -- ls -la /data/rgbnir/2021/S22/` to see satellite data from the [ESA WorldCover product](https://esa-worldcover.org/en/data-access).
 
-You can install the CSI plugin via Helm. Please checkout the default values file at `deploy/csi-rclone/values.yaml`
-in this repository for the possible options on how to configure the installation.
+## Acknowledgement
+implementation is derived (all Apache-2.0 licensed) from:
+- https://github.com/ctrox/csi-s3
+- https://github.com/wunderio/csi-rclone
+- https://github.com/SwissDataScienceCenter/csi-rclone
 
-```bash
-helm repo add renku https://swissdatasciencecenter.github.io/helm-charts
-helm repo update
-helm install csi-rclone renku/csi-rclone
-```
+## License
 
-## Changelog
-
-See [CHANGELOG.txt](CHANGELOG.txt)
-
-## Dev Environment
-This repo uses `nix` for the dev environment. Alternatively, run `nix develop` to enter a dev shell.
-
-Ensure that `nix`, `direnv` and `nix-direnv` are installed.
-Also add the following to your nix.conf:
-```
-experimental-features = nix-command flakes
-```
-then commands can be run like e.g. `nix run '.#initKind'`. Check `flakes.nix` 
-for all available commands.
-
-To deploy the test cluster and run tests, run 
-```bash
-$ nix run '.#initKind'
-$ nix run '.#getKubeconfig'
-$ nix run '.#deployToKind'
-$ go test -v ./...
-```
-in your shell, or if you're in a nix shell, run
-```bash
-$ init-kind-cluster
-$ get-kind-kubeconfig
-$ local-deploy
-$ go test -v ./...
-```
+[Apache 2.0](LICENSE) (Apache License Version 2.0, January 2004) from https://www.apache.org/licenses/LICENSE-2.0

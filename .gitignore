@@ -1,8 +1,2 @@
-_output/
-.vscode
-rclone-build/
-.direnv/
-result
-kubeconfig
-.DS_Store
-devenv/kind/
+csi-rclone
+tools/node_modules

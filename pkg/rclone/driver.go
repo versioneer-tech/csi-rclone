@@ -6,9 +6,9 @@ import (
 	"os"
 	"sync"
 
-	"github.com/SwissDataScienceCenter/csi-rclone/pkg/kube"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	csicommon "github.com/kubernetes-csi/drivers/pkg/csi-common"
+	"github.com/versioneer-tech/csi-rclone/pkg/kube"
 	"k8s.io/klog"
 	"k8s.io/utils/mount"
 
@@ -27,7 +27,7 @@ type Driver struct {
 }
 
 var (
-	DriverVersion = "SwissDataScienceCenter"
+	DriverVersion = "github.com/versioneer-tech/csi-rclone"
 )
 
 func getFreePort() (port int, err error) {

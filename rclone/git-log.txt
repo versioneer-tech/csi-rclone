@@ -1,0 +1,161 @@
+commit ffcaa6cd927929a871609a8d6ce0004324feb8d0
+Author: Nick Craig-Wood <nick@craig-wood.com>
+Date:   Wed Jan 24 15:25:51 2024 +0000
+
+    Version v1.65.2
+
+commit 98e81a6c2b301c6cd18849e90dd48d17a0564d9a
+Author: Nick Craig-Wood <nick@craig-wood.com>
+Date:   Tue Jan 23 09:53:47 2024 +0000
+
+    azureblob: fix data corruption bug #7590
+    
+    It was reported that rclone copy occasionally uploaded corrupted data
+    to azure blob.
+    
+    This turned out to be a race condition updating the block count which
+    caused blocks to be duplicated.
+    
+    This bug was introduced in this commit in v1.64.0 and will be fixed in v1.65.2
+    
+    0427177857a8d607 azureblob: implement OpenChunkWriter and multi-thread uploads #7056
+    
+    This race only seems to happen if `--checksum` is used but can happen otherwise.
+    
+    Unfortunately Azure blob does not check the MD5 that we send them so
+    despite sending incorrect data this corruption is not detected. The
+    corruption is detected when rclone tries to download the file, so
+    attempting to copy the files back to local disk will result in errors
+    such as:
+    
+        ERROR : file.pokosuf5.partial: corrupted on transfer: md5 hash differ "XXX" vs "YYY"
+    
+    This adds a check to test the blocklist we upload is as we expected
+    which would have caught the problem had it been in place earlier.
+
+commit 9e60a065b43211e247fbe4bd2ddda9ba2164a80d
+Author: Nick Craig-Wood <nick@craig-wood.com>
+Date:   Wed Jan 24 11:25:47 2024 +0000
+
+    build: add -race flag to integration tester test_all
+
+commit 95e18bdc6f931091fbf4c97a3efa6b83d7b44abb
+Author: nielash <nielronash@gmail.com>
+Date:   Wed Nov 8 00:46:44 2023 -0500
+
+    docs: add bisync to index
+
+commit a4c7b3da15235f5a7a9a1dbe27b36527609214ce
+Author: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>
+Date:   Wed Jan 17 22:51:17 2024 +0000
+
+    build(deps): bump actions/cache from 3 to 4
+    
+    Bumps [actions/cache](https://github.com/actions/cache) from 3 to 4.
+    - [Release notes](https://github.com/actions/cache/releases)
+    - [Changelog](https://github.com/actions/cache/blob/main/RELEASES.md)
+    - [Commits](https://github.com/actions/cache/compare/v3...v4)
+    
+    ---
+    updated-dependencies:
+    - dependency-name: actions/cache
+      dependency-type: direct:production
+      update-type: version-update:semver-major
+    ...
+    
+    Signed-off-by: dependabot[bot] <support@github.com>
+
+commit be10debdedd4d5780feda620ed3cd3e1784643fb
+Author: Tera <24725862+teraa@users.noreply.github.com>
+Date:   Thu Jan 18 10:48:34 2024 +0100
+
+    add missing backtick
+
+commit a7cb8b71f058b042c6c2adb773fb4e5e9d6583f3
+Author: kapitainsky <dariuszb@me.com>
+Date:   Wed Jan 17 15:55:02 2024 +0000
+
+    docs: add rclone OS requirements
+    
+    Adds rclone OS requirements list and latest rclone versions known to be working with specific historical OS versions.
+    
+    Discussed on the forum:
+    https://forum.rclone.org/t/rclone-1-65-1-runtime-exception-error-crash-immediately-after-running-the-command/44051
+    
+    Fixes: #7571
+
+commit 322d683997af8f9edcba74898df915c1477db906
+Author: Harshit Budhraja <52413945+harshit-budhraja@users.noreply.github.com>
+Date:   Wed Jan 17 16:53:06 2024 +0530
+
+    imagekit: updated overview - supported operations
+
+commit 964753b2d5b5424011a389438a1024bf4c610b63
+Author: Harshit Budhraja <52413945+harshit-budhraja@users.noreply.github.com>
+Date:   Tue Jan 16 19:47:23 2024 +0530
+
+    imagekit: Updated docs and web content
+
+commit 8b3bd745659f9b220458528aad98bb8f2b0c0291
+Author: Nick Craig-Wood <nick@craig-wood.com>
+Date:   Thu Jan 11 11:11:45 2024 +0000
+
+    docs: add warp.dev sponsorship to github home page
+
+commit c394786c9527650000de85d8d583b3c7fcf4464d
+Author: Nick Craig-Wood <nick@craig-wood.com>
+Date:   Thu Jan 11 10:57:54 2024 +0000
+
+    docs: add warp.dev as a sponsor
+
+commit 824d01065aa4b7971fd0e0339939a92d68bf684e
+Author: Nick Craig-Wood <nick@craig-wood.com>
+Date:   Thu Jan 11 12:34:40 2024 +0000
+
+    docs: update website footer
+
+commit 07bf3a4cccacc589bda3901042a61c6f85cb7bca
+Author: Nick Craig-Wood <nick@craig-wood.com>
+Date:   Sun Jan 14 17:46:25 2024 +0000
+
+    vfs: fix stale data when using --vfs-cache-mode full
+    
+    Before this change the VFS cache could get into a state where when an
+    object was updated remotely, the fingerprint of the item was correct
+    for the new object but the data in the VFS cache was for the old
+    object.
+    
+    This fixes the problem by updating the fingerprint of the item at the
+    point we remove the stale data. The empty cache item now represents
+    the new item even though it has no data in.
+    
+    This stops the fallback code for an empty fingerprint running (used
+    when we are writing items to the cache instead of reading them) which
+    was causing the problem.
+    
+    Fixes #6053
+    See: https://forum.rclone.org/t/cached-webdav-mount-fingerprints-get-nuked-on-ls/43974/
+
+commit 19274ed78d3e4b74cebcf47965255fdc124a4377
+Author: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>
+Date:   Mon Jan 8 16:54:10 2024 +0000
+
+    build(deps): bump github.com/cloudflare/circl from 1.3.6 to 1.3.7
+    
+    Bumps [github.com/cloudflare/circl](https://github.com/cloudflare/circl) from 1.3.6 to 1.3.7.
+    - [Release notes](https://github.com/cloudflare/circl/releases)
+    - [Commits](https://github.com/cloudflare/circl/compare/v1.3.6...v1.3.7)
+    
+    ---
+    updated-dependencies:
+    - dependency-name: github.com/cloudflare/circl
+      dependency-type: indirect
+    ...
+    
+    Signed-off-by: dependabot[bot] <support@github.com>
+
+commit 6276c7123acf9f79bca74798185a8e21e5032c9b
+Author: Nick Craig-Wood <nick@craig-wood.com>
+Date:   Mon Jan 8 11:52:14 2024 +0000
+
+    Start v1.65.2-DEV development

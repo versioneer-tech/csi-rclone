@@ -1,0 +1,587 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: csi-rclone-controller
+  namespace: csi-rclone
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: csi-rclone-nodeplugin
+  namespace: csi-rclone
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: csi-rclone
+provisioner: csi-rclone
+volumeBindingMode: Immediate
+reclaimPolicy: Delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: csi-rclone-external-controller
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumes
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+- apiGroups:
+  - ""
+  resources: 
+  - "secrets"
+  - "secret"
+  verbs:
+  - "get"
+  - "list"
+  - "create" 
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - csi.storage.k8s.io
+  resources:
+  - csinodeinfos
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - volumeattachments
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - volumeattachments
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - volumeattachments/status
+  verbs:
+  - patch
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - create
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: csi-rclone-external-provisioner-runner
+rules:
+  - apiGroups: 
+    - ""
+    resources:
+    - "secrets"
+    verbs: 
+    - "get"
+    - "list"
+  - apiGroups:
+    - ""
+    resources:
+    - "persistentvolumes"
+    verbs: 
+    - "get"
+    - "list"
+    - "watch"
+    - "create"
+    - "delete"
+  - apiGroups: 
+    - ""
+    resources:
+    - "persistentvolumeclaims"
+    verbs:
+    - "get"
+    - "list"
+    - "watch"
+    - "update"
+  - apiGroups: 
+    - "storage.k8s.io"
+    resources:
+    - "storageclasses"
+    verbs: 
+    - "get"
+    - "list"
+    - "watch"
+  - apiGroups:
+    - ""
+    resources:
+    - "events"
+    verbs:
+    - "list"
+    - "watch"
+    - "create"
+    - "update"
+    - "patch"
+  - apiGroups: 
+    - "snapshot.storage.k8s.io"
+    resources: 
+    - "volumesnapshots"
+    verbs: 
+    - "get"
+    - "list"
+  - apiGroups: 
+    - "snapshot.storage.k8s.io"
+    resources: 
+    - "volumesnapshotcontents"
+    verbs: 
+    - "get"
+    - "list"
+  - apiGroups: 
+    - "storage.k8s.io"
+    resources: 
+    - "csinodes"
+    verbs: 
+    - "get"
+    - "list"
+    - "watch"
+  - apiGroups:
+    - ""
+    resources: 
+    - "nodes"
+    verbs: 
+    - "get"
+    - "list"
+    - "watch"
+  - apiGroups: 
+    - "storage.k8s.io"
+    resources: 
+    - "volumeattachments"
+    verbs: 
+    - "get"
+    - "list"
+    - "watch"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: csi-rclone-nodeplugin
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumes
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  - secret
+  verbs:
+  - get
+  - list
+  - create
+  - delete
+- apiGroups:
+  - ""
+  resources: 
+  - pods
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - deploy
+  - deployment
+  verbs: 
+  - get
+  - list
+  - create
+  - delete
+  - watch
+  - patch
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - volumeattachments
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: csi-rclone-attacher-role
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: 'csi-rclone-external-controller'
+subjects:
+- kind: ServiceAccount
+  name: 'csi-rclone-controller'
+  namespace: csi-rclone
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: csi-rclone-provisioner-role
+subjects:
+  - kind: ServiceAccount
+    name: 'csi-rclone-controller'
+    namespace: csi-rclone
+roleRef:
+  kind: ClusterRole
+  name: 'csi-rclone-external-provisioner-runner'
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: csi-rclone-nodeplugin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: 'csi-rclone-nodeplugin'
+subjects:
+- kind: ServiceAccount
+  name: 'csi-rclone-nodeplugin'
+  namespace: csi-rclone
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: csi-rclone-external-provisioner-cfg
+  namespace: csi-rclone
+rules:
+- apiGroups: 
+  - ""
+  resources: 
+  - "endpoints"
+  verbs:
+  - "get"
+  - "watch"
+  - "list"
+  - "delete"
+  - "update"
+  - "create"
+- apiGroups: 
+  - "coordination.k8s.io"
+  resources:
+  - "leases"
+  verbs: 
+  - "get"
+  - "watch"
+  - "list"
+  - "delete"
+  - "update"
+  - "create"
+- apiGroups: 
+  - "storage.k8s.io"
+  resources: 
+  - "csistoragecapacities"
+  verbs: 
+  - "get"
+  - "list"
+  - "watch"
+  - "create"
+  - "update"
+  - "patch"
+  - "delete"
+- apiGroups: 
+  - ""
+  resources: 
+  - "pods"
+  verbs: 
+  - "get"
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: csi-rclone-provisioner-role-cfg
+  namespace: csi-rclone
+subjects:
+  - kind: ServiceAccount
+    name: csi-rclone-controller
+    namespace: csi-rclone
+roleRef:
+  kind: Role
+  name: csi-rclone-external-provisioner-cfg
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: csi-rclone-nodeplugin
+  namespace: csi-rclone
+spec:
+  selector:
+    matchLabels:
+      app: csi-nodeplugin-rclone
+  template:
+    metadata:
+      labels:
+        app: csi-nodeplugin-rclone
+    spec:
+      serviceAccountName: csi-rclone-nodeplugin
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+      - name: node-driver-registrar
+        args:
+        - --v=5
+        - --csi-address=/plugin/csi.sock
+        - --kubelet-registration-path=/var/lib/kubelet/plugins/csi-rclone/csi.sock
+        env:
+        - name: KUBE_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: KUBERNETES_CLUSTER_DOMAIN
+          value: "cluster.local"
+        image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.13.0
+        imagePullPolicy: IfNotPresent
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - rm -rf /registration/csi-rclone /registration/csi-rclone-reg.sock
+        resources: {}
+        volumeMounts:
+        - mountPath: /plugin
+          name: plugin-dir
+        - mountPath: /registration
+          name: registration-dir
+      - name: liveness-probe
+        imagePullPolicy: Always
+        image: registry.k8s.io/sig-storage/livenessprobe:v2.15.0
+        args:
+        - --csi-address=/plugin/csi.sock
+        volumeMounts:
+        - mountPath: /plugin
+          name: plugin-dir
+      - name: rclone
+        args:
+        - run
+        - node
+        - --nodeid=$(NODE_ID)
+        - --endpoint=$(CSI_ENDPOINT)
+        env:
+        - name: NODE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: CSI_ENDPOINT
+          value: "unix://plugin/csi.sock"
+        - name: KUBERNETES_CLUSTER_DOMAIN
+          value: "cluster.local"
+        - name: DRIVER_NAME
+          value: "csi-rclone"
+        - name: LOG_LEVEL
+          value: "NOTICE"
+        image: ghcr.io/versioneer-tech/csi-rclone:v2025.3.1
+        imagePullPolicy: IfNotPresent
+        resources: {}
+        securityContext:
+          allowPrivilegeEscalation: true
+          capabilities:
+            add:
+            - SYS_ADMIN
+          privileged: true
+        ports:
+          - containerPort: 9808
+            name: healthz
+            protocol: TCP
+        livenessProbe:
+          failureThreshold: 5
+          httpGet:
+            path: /healthz
+            port: healthz
+          initialDelaySeconds: 30
+          timeoutSeconds: 10
+          periodSeconds: 30
+        volumeMounts:
+        - mountPath: /plugin
+          name: plugin-dir
+        - mountPath: /var/lib/kubelet/pods
+          mountPropagation: Bidirectional
+          name: pods-mount-dir
+      volumes:
+      - hostPath:
+          path: /var/lib/kubelet/plugins/csi-rclone
+          type: DirectoryOrCreate
+        name: plugin-dir
+      - hostPath:
+          path: /var/lib/kubelet/pods
+          type: Directory
+        name: pods-mount-dir
+      - hostPath:
+          path: /var/lib/kubelet/plugins_registry
+          type: DirectoryOrCreate
+        name: registration-dir
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: csi-rclone-controller
+  namespace: csi-rclone
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: csi-controller-rclone
+  serviceName: csi-rclone-controller
+  template:
+    metadata:
+      labels:
+        app: csi-controller-rclone
+    spec:
+      serviceAccountName: csi-rclone-controller
+      containers:
+      - name: csi-attacher
+        args:
+        - --v=5
+        - --csi-address=$(ADDRESS)
+        - --leader-election
+        env:
+        - name: ADDRESS
+          value: "/csi/csi.sock"
+        - name: KUBERNETES_CLUSTER_DOMAIN
+          value: "cluster.local"
+        image: registry.k8s.io/sig-storage/csi-attacher:v4.7.0
+        imagePullPolicy: IfNotPresent
+        resources: {}
+        volumeMounts:
+        - mountPath: /csi
+          name: socket-dir
+      - name: csi-provisioner
+        args:
+        - --csi-address=$(ADDRESS)
+        - --capacity-ownerref-level=0
+        - "--extra-create-metadata" 
+        env:
+        - name: ADDRESS
+          value: "/csi/csi.sock"
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        image: registry.k8s.io/sig-storage/csi-provisioner:v5.1.0
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+          - name: socket-dir
+            mountPath: /csi
+      - name: rclone
+        args:
+        - run
+        - controller
+        - --nodeid=$(NODE_ID)
+        - --endpoint=$(CSI_ENDPOINT)
+        env:
+        - name: DRIVER_NAME
+          value: "csi-rclone"
+        - name: NODE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: CSI_ENDPOINT
+          value: "unix://plugin/csi.sock"
+        - name: KUBERNETES_CLUSTER_DOMAIN
+          value: "cluster.local"
+        image: ghcr.io/versioneer-tech/csi-rclone:v2025.3.1
+        imagePullPolicy: IfNotPresent
+        resources: {}
+        ports:
+        - containerPort: 9808
+          name: healthz
+          protocol: TCP
+        livenessProbe:
+          failureThreshold: 5
+          httpGet:
+            path: /healthz
+            port: healthz
+          initialDelaySeconds: 10
+          timeoutSeconds: 3
+          periodSeconds: 2
+        volumeMounts:
+        - mountPath: /plugin
+          name: socket-dir
+      - name: liveness-probe
+        imagePullPolicy: Always
+        image: registry.k8s.io/sig-storage/livenessprobe:v2.15.0
+        args:
+        - --csi-address=/csi/csi.sock
+        volumeMounts:
+        - mountPath: /csi
+          name: socket-dir
+      volumes:
+      - emptyDir: {}
+        name: socket-dir
+---
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: csi-rclone-driver
+spec:
+  attachRequired: true
+  podInfoOnMount: false  
+  volumeLifecycleModes:
+    - Persistent
+    - Ephemeral

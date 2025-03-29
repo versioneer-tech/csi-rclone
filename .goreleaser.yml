@@ -1,0 +1,43 @@
+project_name: csi-rclone
+
+env:
+  - GO111MODULE=on
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X github.com/versioneer-tech/csi-rclone/version.Version={{ .Version }} -X github.com/versioneer-tech/csi-rclone/version.CommitSHA={{ .ShortCommit }}
+    main: main.go
+    binary: csi-rclone
+    goos:
+      - linux
+    goarch:
+      - amd64
+archives:
+  - name_template: "{{.Os}}-{{.Arch}}{{if .Arm}}v{{.Arm}}{{end}}-{{ .ProjectName }}"
+    format: tar.gz
+dockers:
+  - dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.name={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source={{.GitURL}}"
+      - "--platform=linux/amd64"
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "ghcr.io/versioneer-tech/csi-rclone:{{ .Tag }}-amd64"
+    extra_files:
+      - rclone/
+docker_manifests:
+  - name_template: "ghcr.io/versioneer-tech/csi-rclone:latest"
+    image_templates:
+      - "ghcr.io/versioneer-tech/csi-rclone:{{ .Tag }}-amd64"
+  - name_template: "ghcr.io/versioneer-tech/csi-rclone:{{ .Tag }}"
+    image_templates:
+      - "ghcr.io/versioneer-tech/csi-rclone:{{ .Tag }}-amd64"
