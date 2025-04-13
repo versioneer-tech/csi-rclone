@@ -30,9 +30,6 @@ import (
 	csicommon "github.com/kubernetes-csi/drivers/pkg/csi-common"
 )
 
-const CSI_ANNOTATION_PREFIX = "csi-rclone.dev"
-const pvcSecretNameAnnotation = CSI_ANNOTATION_PREFIX + "/secretName"
-
 type nodeServer struct {
 	*csicommon.DefaultNodeServer
 	mounter   *mount.SafeFormatAndMount
@@ -50,6 +47,7 @@ func (ns *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstag
 
 // Mounting Volume (Actual Mounting)
 func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
+	klog.Infof("NodePublishVolumeRequest=%+v", *req)
 	if err := validatePublishVolumeRequest(req); err != nil {
 		return nil, err
 	}
@@ -60,41 +58,18 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	readOnly := req.GetReadonly()
 	secretName, foundSecret := volumeContext["secretName"]
 	secretNamespace, foundSecretNamespace := volumeContext["secretNamespace"]
-	// For backwards compatibility - prior to the change in #20 this field held the namespace
-	if !foundSecretNamespace {
-		secretNamespace, foundSecretNamespace = volumeContext["namespace"]
-	}
-
-	if !foundSecret || !foundSecretNamespace {
-		return nil, fmt.Errorf("Cannot find the 'secretName', 'secretNamespace' and/or 'namespace' fields in the volume context. If you are not using automated provisioning you have to specify these values manually in spec.csi.volumeAttributes in your PersistentVolume manifest. If you are using automated provisioning and these values are not found report this as a bug to the developers.")
-	}
-
-	// This is here for compatiblity reasons
-	// If the req.Secrets is empty it means that the old method of passing the secret is used
-	// Where the secret is not automatically loaded and we have to read it here.
 	var pvcSecret *v1.Secret = nil
 	var err error
-	if len(req.GetSecrets()) == 0 {
+	if foundSecret && foundSecretNamespace {
 		pvcSecret, err = getSecret(ctx, secretNamespace, secretName)
 		if err != nil && !apierrors.IsNotFound(err) {
 			return nil, err
 		}
 	}
 
-	// Regardless of whether the secret is passed via annotations or not we assume that the encrypted secret
-	// name is the PVC name or annotation value + "-secrets". There is no way for the user to pass this value
-	// to the CSI driver.
-	savedSecretName := secretName + "-secrets"
-	savedPvcSecret, err := getSecret(ctx, secretNamespace, savedSecretName)
-	if err != nil && !apierrors.IsNotFound(err) {
-		return nil, err
-	} else if apierrors.IsNotFound(err) {
-		klog.Warningf("Cannot find saved secrets %s: %s", savedSecretName, err)
-	}
-
-	remote, remotePath, configData, flags, e := extractFlags(req.GetVolumeContext(), req.GetSecrets(), pvcSecret, savedPvcSecret)
-	delete(flags, "secretName")
-	delete(flags, "namespace")
+	remote, remotePath, configData, parameters, e := extractFlags(req.GetVolumeContext(), req.GetSecrets(), pvcSecret)
+	delete(parameters, "secretName")
+	delete(parameters, "secretNamespace")
 	if e != nil {
 		klog.Warningf("storage parameter error: %s", e)
 		return nil, e
@@ -131,7 +106,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		Remote:     remote,
 		RemotePath: remotePath,
 	}
-	err = ns.RcloneOps.Mount(ctx, rcloneVol, targetPath, configData, readOnly, flags)
+	err = ns.RcloneOps.Mount(ctx, rcloneVol, targetPath, configData, readOnly, parameters)
 	if err != nil {
 		if os.IsPermission(err) {
 			return nil, status.Error(codes.PermissionDenied, err.Error())
@@ -191,7 +166,7 @@ func validatePublishVolumeRequest(req *csi.NodePublishVolumeRequest) error {
 	return nil
 }
 
-func extractFlags(volumeContext map[string]string, secret map[string]string, pvcSecret *v1.Secret, savedPvcSecret *v1.Secret) (string, string, string, map[string]string, error) {
+func extractFlags(volumeContext map[string]string, secret map[string]string, pvcSecret *v1.Secret) (string, string, string, map[string]string, error) {
 
 	// Empty argument list
 	flags := make(map[string]string)
@@ -231,18 +206,6 @@ func extractFlags(volumeContext map[string]string, secret map[string]string, pvc
 	}
 
 	configData, flags := extractConfigData(flags)
-
-	if savedPvcSecret != nil {
-		if savedSecrets, err := decryptSecrets(flags, savedPvcSecret); err != nil {
-			klog.Errorf("cannot decode saved storage secrets: %s", err)
-		} else {
-			if modifiedConfigData, err := updateConfigData(remote, configData, savedSecrets); err == nil {
-				configData = modifiedConfigData
-			} else {
-				klog.Errorf("cannot update config data: %s", err)
-			}
-		}
-	}
 
 	return remote, remotePath, configData, flags, nil
 }

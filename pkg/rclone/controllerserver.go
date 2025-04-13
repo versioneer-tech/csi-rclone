@@ -3,6 +3,7 @@
 package rclone
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -13,8 +14,6 @@ import (
 
 	csicommon "github.com/kubernetes-csi/drivers/pkg/csi-common"
 )
-
-const secretAnnotationName = "csi-rclone.dev/secretName"
 
 type controllerServer struct {
 	*csicommon.DefaultControllerServer
@@ -57,7 +56,7 @@ func (cs *controllerServer) ControllerUnpublishVolume(ctx context.Context, req *
 
 // Provisioning Volumes
 func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
-	klog.Infof("ControllerCreateVolume: called with args %+v", *req)
+	klog.Infof("CreateVolumeRequest=%+v", *req)
 	volumeName := req.GetName()
 	if len(volumeName) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "CreateVolume name must be provided")
@@ -89,22 +88,24 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 		return nil, status.Error(codes.FailedPrecondition, "The PVC name and/or namespace are not present in the create volume request parameters.")
 	}
 	volumeContext := map[string]string{}
-	if len(req.GetSecrets()) > 0 {
-		pvc, err := getPVC(ctx, pvcNamespace, pvcName)
-		if err != nil {
-			return nil, err
-		}
-		secretName, secretNameFound := pvc.Annotations[secretAnnotationName]
-		if !secretNameFound {
-			return nil, status.Error(codes.FailedPrecondition, "The secret name is not present in the PVC annotations.")
-		}
-		volumeContext["secretName"] = secretName
-		volumeContext["secretNamespace"] = pvcNamespace
-	} else {
-		// This is here for compatibility reasons before this update the secret name was equal to the PVC
+
+	secretName, ok := req.Parameters["csi.storage.k8s.io/node-publish-secret-name"]
+	if !ok || strings.TrimSpace(secretName) == "" {
 		volumeContext["secretName"] = pvcName
+	}
+
+	secretNamespace, ok := req.Parameters["csi.storage.k8s.io/node-publish-secret-namespace"]
+	if !ok || strings.TrimSpace(secretNamespace) == "" {
 		volumeContext["secretNamespace"] = pvcNamespace
 	}
+
+	if vfsOpt, ok := req.Parameters["vfsOpt"]; ok && strings.TrimSpace(vfsOpt) != "" {
+		volumeContext["vfsOpt"] = vfsOpt
+	}
+	if mountOpt, ok := req.Parameters["mountOpt"]; ok && strings.TrimSpace(mountOpt) != "" {
+		volumeContext["mountOpt"] = mountOpt
+	}
+
 	return &csi.CreateVolumeResponse{
 		Volume: &csi.Volume{
 			VolumeId:      volumeName,

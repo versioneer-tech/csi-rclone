@@ -10,10 +10,9 @@ import (
 	"net/http"
 	"os"
 	os_exec "os/exec"
+	"strings"
 	"syscall"
 	"time"
-
-	"strings"
 
 	"golang.org/x/net/context"
 	"gopkg.in/ini.v1"
@@ -29,9 +28,9 @@ var (
 )
 
 type Operations interface {
-	CreateVol(ctx context.Context, volumeName, remote, remotePath, rcloneConfigPath string, pameters map[string]string) error
-	DeleteVol(ctx context.Context, rcloneVolume *RcloneVolume, rcloneConfigPath string, pameters map[string]string) error
-	Mount(ctx context.Context, rcloneVolume *RcloneVolume, targetPath string, rcloneConfigData string, readOnly bool, pameters map[string]string) error
+	CreateVol(ctx context.Context, volumeName, remote, remotePath, rcloneConfigPath string, parameters map[string]string) error
+	DeleteVol(ctx context.Context, rcloneVolume *RcloneVolume, rcloneConfigPath string, parameters map[string]string) error
+	Mount(ctx context.Context, rcloneVolume *RcloneVolume, targetPath string, rcloneConfigData string, readOnly bool, parameters map[string]string) error
 	Unmount(ctx context.Context, volumeId string, targetPath string) error
 	GetVolumeById(ctx context.Context, volumeId string) (*RcloneVolume, error)
 	Cleanup() error
@@ -58,14 +57,55 @@ type MountRequest struct {
 }
 
 type VfsOpt struct {
-	CacheMode    string        `json:"cacheMode"`
-	DirCacheTime time.Duration `json:"dirCacheTime"`
-	ReadOnly     bool          `json:"readOnly"`
+	NoSeek             bool          `json:"noSeek,omitempty"`
+	NoChecksum         bool          `json:"noChecksum,omitempty"`
+	ReadOnly           bool          `json:"readOnly,omitempty"`
+	NoModTime          bool          `json:"noModTime,omitempty"`
+	DirCacheTime       time.Duration `json:"dirCacheTime,omitempty"`
+	Refresh            bool          `json:"refresh,omitempty"`
+	PollInterval       time.Duration `json:"pollInterval,omitempty"`
+	Umask              int           `json:"umask,omitempty"`
+	UID                uint32        `json:"uid,omitempty"`
+	GID                uint32        `json:"gid,omitempty"`
+	DirPerms           os.FileMode   `json:"dirPerms,omitempty"`
+	FilePerms          os.FileMode   `json:"filePerms,omitempty"`
+	ChunkSize          int64         `json:"chunkSize,omitempty"`
+	ChunkSizeLimit     int64         `json:"chunkSizeLimit,omitempty"`
+	CacheMode          string        `json:"cacheMode,omitempty"`
+	CacheMaxAge        time.Duration `json:"cacheMaxAge,omitempty"`
+	CacheMaxSize       int64         `json:"cacheMaxSize,omitempty"`
+	CacheMinFreeSpace  int64         `json:"cacheMinFreeSpace,omitempty"`
+	CachePollInterval  time.Duration `json:"cachePollInterval,omitempty"`
+	CaseInsensitive    bool          `json:"caseInsensitive,omitempty"`
+	WriteWait          time.Duration `json:"writeWait,omitempty"`
+	ReadWait           time.Duration `json:"readWait,omitempty"`
+	WriteBack          time.Duration `json:"writeBack,omitempty"`
+	ReadAhead          int64         `json:"readAhead,omitempty"`
+	UsedIsSize         bool          `json:"usedIsSize,omitempty"`
+	FastFingerprint    bool          `json:"fastFingerprint,omitempty"`
+	DiskSpaceTotalSize int64         `json:"diskSpaceTotalSize,omitempty"`
 }
+
 type MountOpt struct {
-	AllowNonEmpty bool `json:"allowNonEmpty"`
-	AllowOther    bool `json:"allowOther"`
+	DebugFUSE          bool          `json:"debugFUSE,omitempty"`
+	AllowNonEmpty      bool          `json:"allowNonEmpty,omitempty"`
+	AllowRoot          bool          `json:"allowRoot,omitempty"`
+	AllowOther         bool          `json:"allowOther,omitempty"`
+	DefaultPermissions bool          `json:"defaultPermissions,omitempty"`
+	WritebackCache     bool          `json:"writebackCache,omitempty"`
+	DaemonWait         time.Duration `json:"daemonWait,omitempty"`
+	MaxReadAhead       int64         `json:"maxReadAhead,omitempty"`
+	ExtraOptions       []string      `json:"extraOptions,omitempty"`
+	ExtraFlags         []string      `json:"extraFlags,omitempty"`
+	AttrTimeout        time.Duration `json:"attrTimeout,omitempty"`
+	DeviceName         string        `json:"deviceName,omitempty"`
+	VolumeName         string        `json:"volumeName,omitempty"`
+	NoAppleDouble      bool          `json:"noAppleDouble,omitempty"`
+	NoAppleXattr       bool          `json:"noAppleXattr,omitempty"`
+	AsyncRead          bool          `json:"asyncRead,omitempty"`
+	CaseInsensitive    string        `json:"caseInsensitive,omitempty"`
 }
+
 type ConfigCreateRequest struct {
 	Name        string                 `json:"name"`
 	Parameters  map[string]string      `json:"parameters"`
@@ -105,58 +145,68 @@ func (r *Rclone) Mount(ctx context.Context, rcloneVolume *RcloneVolume, targetPa
 		Parameters:  params,
 		Opt:         map[string]interface{}{"obscure": true},
 	}
-	klog.Infof("executing create config command  args=%v, targetpath=%s", configName, targetPath)
 	postBody, err := json.Marshal(configOpts)
 	if err != nil {
 		return fmt.Errorf("mounting failed: couldn't create request body: %s", err)
 	}
+	klog.Infof("calling config/create with %s", string(postBody))
 	requestBody := bytes.NewBuffer(postBody)
 	resp, err := http.Post(fmt.Sprintf("http://localhost:%d/config/create", r.port), "application/json", requestBody)
 	if err != nil {
 		return fmt.Errorf("mounting failed: couldn't send HTTP request to create config: %w", err)
 	}
-	err = checkResponse(resp)
-	if err != nil {
+	if err = checkResponse(resp); err != nil {
 		return fmt.Errorf("mounting failed: couldn't create config: %w", err)
 	}
 	klog.Infof("created config: %s", configName)
+
+	vfsOpt := VfsOpt{
+		CacheMode:    "writes",
+		DirCacheTime: 60 * time.Second,
+		ReadOnly:     readOnly,
+	}
+	if vfsOptStr := parameters["vfsOpt"]; vfsOptStr != "" {
+		if err = json.Unmarshal([]byte(vfsOptStr), &vfsOpt); err != nil {
+			return fmt.Errorf("could not parse vfsOpt: %w", err)
+		}
+	}
+
+	mountOpt := MountOpt{
+		AllowNonEmpty: true,
+		AllowOther:    true,
+	}
+	if mountOptStr := parameters["mountOpt"]; mountOptStr != "" {
+		if err = json.Unmarshal([]byte(mountOptStr), &mountOpt); err != nil {
+			return fmt.Errorf("could not parse mountOpt: %w", err)
+		}
+	}
 
 	remoteWithPath := fmt.Sprintf("%s:%s", configName, rcloneVolume.RemotePath)
 	mountArgs := MountRequest{
 		Fs:         remoteWithPath,
 		MountPoint: targetPath,
-		VfsOpt: VfsOpt{
-			CacheMode:    "writes",
-			DirCacheTime: 60 * time.Second,
-			ReadOnly:     readOnly,
-		},
-		MountOpt: MountOpt{
-			AllowNonEmpty: true,
-			AllowOther:    true,
-		},
+		VfsOpt:     vfsOpt,
+		MountOpt:   mountOpt,
 	}
 
-	// create target, os.Mkdirall is noop if it exists
-	err = os.MkdirAll(targetPath, 0750)
-	if err != nil {
+	if err = os.MkdirAll(targetPath, 0750); err != nil {
 		return err
 	}
-	klog.Infof("executing mount command  args=%v, targetpath=%s", mountArgs, targetPath)
+
 	postBody, err = json.Marshal(mountArgs)
 	if err != nil {
 		return fmt.Errorf("mounting failed: couldn't create request body: %s", err)
 	}
+	klog.Infof("calling mount/mount with %s", string(postBody))
 	requestBody = bytes.NewBuffer(postBody)
 	resp, err = http.Post(fmt.Sprintf("http://localhost:%d/mount/mount", r.port), "application/json", requestBody)
 	if err != nil {
 		return fmt.Errorf("mounting failed: couldn't send HTTP request to create mount: %w", err)
 	}
-	err = checkResponse(resp)
-	if err != nil {
+	if err = checkResponse(resp); err != nil {
 		return fmt.Errorf("mounting failed: couldn't create mount: %w", err)
 	}
 	klog.Infof("created mount: %s", configName)
-
 	return nil
 }
 
@@ -201,6 +251,7 @@ func (r Rclone) Unmount(ctx context.Context, volumeId string, targetPath string)
 	if err != nil {
 		return fmt.Errorf("unmounting failed: couldn't create request body: %s", err)
 	}
+	klog.Infof("calling mount/unmount with %s", string(postBody))
 	requestBody := bytes.NewBuffer(postBody)
 	resp, err := http.Post(fmt.Sprintf("http://localhost:%d/mount/unmount", r.port), "application/json", requestBody)
 	if err != nil {
@@ -219,6 +270,7 @@ func (r Rclone) Unmount(ctx context.Context, volumeId string, targetPath string)
 	if err != nil {
 		return fmt.Errorf("deleting config failed: couldn't create request body: %s", err)
 	}
+	klog.Infof("calling config/delete with %s", string(postBody))
 	requestBody = bytes.NewBuffer(postBody)
 	resp, err = http.Post(fmt.Sprintf("http://localhost:%d/config/delete", r.port), "application/json", requestBody)
 	if err != nil {
@@ -267,7 +319,8 @@ func (r Rclone) GetVolumeById(ctx context.Context, volumeId string) (*RcloneVolu
 			if err != nil && !apierrors.IsNotFound(err) {
 				return nil, err
 			}
-			remote, path, _, _, err = extractFlags(pv.Spec.CSI.VolumeAttributes, secrets, pvcSecret, nil)
+
+			remote, path, _, _, err = extractFlags(pv.Spec.CSI.VolumeAttributes, secrets, pvcSecret)
 			if err != nil {
 				return nil, err
 			}
