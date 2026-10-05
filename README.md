@@ -1,6 +1,11 @@
 
 # csi-rclone
 
+> [!NOTE]
+> This component is sunset, and the project is archived. Object-storage access
+> is now built directly into our component tooling, for example through rclone
+> VFS. This CSI driver is therefore obsolete.
+
 implementing a k8s container storage interface (csi) plugin using [rclone](https://rclone.org/) to mount a remote
 
 ## install 
